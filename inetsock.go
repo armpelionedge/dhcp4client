@@ -3,7 +3,9 @@ package dhcp4client
 import (
 	"net"
 	"time"
+        "golang.org/x/sys/unix"
 )
+    
 
 type inetSock struct {
 	*net.UDPConn
@@ -30,6 +32,15 @@ func NewInetSock(options ...func(*inetSock) error) (*inetSock, error) {
 
 	c.UDPConn = conn
 	return c, err
+}
+
+
+func (c *inetSock) bindToInterface(ifname string) (err error) {
+    file, err := c.File()
+    if err != nil {
+	    err = unix.BindToDevice(int(file.Fd()), ifname)
+    }
+    return 
 }
 
 func (c *inetSock) setOption(options ...func(*inetSock) error) error {

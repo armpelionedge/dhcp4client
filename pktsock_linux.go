@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"net"
 	"time"
-
+//	"errors"
 	"golang.org/x/sys/unix"
 )
 
@@ -55,7 +55,8 @@ func (pc *packetSock) Close() error {
 }
 
 func (pc *packetSock) Write(packet []byte) error {
-	lladdr := unix.SockaddrLinklayer{
+//      if pc.fd == 0 {
+        lladdr := unix.SockaddrLinklayer{
 		Ifindex:  pc.ifindex,
 		Protocol: swap16(unix.ETH_P_IP),
 		Halen:    uint8(len(bcastMAC)),
@@ -71,6 +72,10 @@ func (pc *packetSock) Write(packet []byte) error {
 	copy(pkt[minIPHdrLen+udpHdrLen:len(pkt)], packet)
 
 	return unix.Sendto(pc.fd, pkt, 0, &lladdr)
+
+ //     } else {
+ //     	return errors.New("No FD for PacketSocket")          
+ //     }
 }
 
 func (pc *packetSock) ReadFrom() ([]byte, net.IP, error) {
