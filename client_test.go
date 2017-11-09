@@ -25,8 +25,13 @@ func Test_GetInterfaces(test *testing.T) {
 //Example Client
 func Test_ExampleClientAfPacket(test *testing.T) {
 	var err error
+<<<<<<< HEAD
 
 	m, err := net.ParseMAC("74:da:38:7d:66:7b")
+=======
+//74:da:38:7d:66:7b
+	m, err := net.ParseMAC("74-da-38-7d-66-7b")
+>>>>>>> 2d0b38957f3f7648a4923883d4817b4247fe6cf6
 //	m, err := net.ParseMAC("08-00-27-00-A8-E8")
 //	f4:f9:51:f2:2d:b3
 	if err != nil {
@@ -35,7 +40,7 @@ func Test_ExampleClientAfPacket(test *testing.T) {
 
 	//Create a connection to use
 	//We need to set the connection ports to 1068 and 1067 so we don't need root access
-    c, err := dhcp4client.NewPacketSock(3) //,dhcp4client.SetLocalAddr(net.UDPAddr{IP: net.IPv4(0, 0, 0, 0), Port: 1068}), dhcp4client.SetRemoteAddr(net.UDPAddr{IP: net.IPv4bcast, Port: 1067}))
+    c, err := dhcp4client.NewPacketSock(15) //,dhcp4client.SetLocalAddr(net.UDPAddr{IP: net.IPv4(0, 0, 0, 0), Port: 1068}), dhcp4client.SetRemoteAddr(net.UDPAddr{IP: net.IPv4bcast, Port: 1067}))
 	if err != nil {
 		test.Error("Client Connection Generation:" + err.Error())
 	}
@@ -49,8 +54,8 @@ func Test_ExampleClientAfPacket(test *testing.T) {
 
 	success, acknowledgementpacket, err := exampleClient.Request()
 
-	test.Logf("Success:%v\n", success)
-	test.Logf("Packet:%v\n", acknowledgementpacket)
+	test.Logf("Success:%+v\n", success)
+	test.Logf("Packet:%+v\n", acknowledgementpacket)
 
 	if err != nil {
 		networkError, ok := err.(*net.OpError)
@@ -82,6 +87,7 @@ func Test_ExampleClientAfPacket(test *testing.T) {
 		test.Error("We didn't sucessfully Renew a DHCP Lease?")
 	} else {
 		log.Printf("IP Received:%v\n", acknowledgementpacket.YIAddr().String())
+		test.Logf("packet:%+v\n",acknowledgementpacket)
 	}
 
 }
