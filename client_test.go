@@ -25,13 +25,7 @@ func Test_GetInterfaces(test *testing.T) {
 //Example Client
 func Test_ExampleClientAfPacket(test *testing.T) {
 	var err error
-<<<<<<< HEAD
-
-	m, err := net.ParseMAC("74:da:38:7d:66:7b")
-=======
-//74:da:38:7d:66:7b
 	m, err := net.ParseMAC("74-da-38-7d-66-7b")
->>>>>>> 2d0b38957f3f7648a4923883d4817b4247fe6cf6
 //	m, err := net.ParseMAC("08-00-27-00-A8-E8")
 //	f4:f9:51:f2:2d:b3
 	if err != nil {
