@@ -35,7 +35,7 @@ func NewInetSock(options ...func(*inetSock) error) (*inetSock, error) {
 }
 
 
-func (c *inetSock) bindToInterface(ifname string) (err error) {
+func (c *inetSock) BindToInterface(ifname string) (err error) {
     file, err := c.File()
     if err != nil {
 	    err = unix.BindToDevice(int(file.Fd()), ifname)
