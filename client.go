@@ -4,16 +4,23 @@ import (
 	"bytes"
 	"net"
 	"time"
-
+	"fmt"
 	"github.com/WigWagCo/dhcp4"
 )
 
 const (
 	MaxDHCPLen = 576
+	// progress states
+	AtGetOffer = 0x01
+	AtSendRequest = 0x02
+	AtGetAcknowledgement = 0x03
 )
+
+type RequestProgressCB func (state int) (keepgoing bool)
 
 type DhcpRequestOptions struct {
     RequestedParams []byte
+    ProgressCB RequestProgressCB
 }
 
 func (opts *DhcpRequestOptions) AddRequestParam(code dhcp4.OptionCode) {
@@ -24,6 +31,7 @@ type Client struct {
 	hardwareAddr  net.HardwareAddr //The HardwareAddr to send in the request.
 	ignoreServers []net.IP         //List of Servers to Ignore requests from.
 	timeout       time.Duration    //Time before we timeout.
+	writeTimeout  time.Duration    //Time before we timeout on a write (send)
 	broadcast     bool             //Set the Bcast flag in BOOTP Flags
 	connection    connection       //The Connection Method to use
 	generateXID   func([]byte)     //Function Used to Generate a XID
@@ -35,11 +43,13 @@ type connection interface {
 	Write(packet []byte) error
 	ReadFrom() ([]byte, net.IP, error)
 	SetReadTimeout(t time.Duration) error
+	SetWriteTimeout(t time.Duration) error	
 }
 
 func New(options ...func(*Client) error) (*Client, error) {
 	c := Client{
 		timeout:     time.Second * 10,
+		writeTimeout:     time.Second * 10,
 		broadcast:   true,
 		generateXID: CryptoGenerateXID,
 	}
@@ -73,6 +83,13 @@ func (c *Client) SetOption(options ...func(*Client) error) error {
 func Timeout(t time.Duration) func(*Client) error {
 	return func(c *Client) error {
 		c.timeout = t
+		return nil
+	}
+}
+
+func WriteTimeout(t time.Duration) func(*Client) error {
+	return func(c *Client) error {
+		c.writeTimeout = t
 		return nil
 	}
 }
@@ -124,7 +141,7 @@ func (c *Client) Close() error {
 func (c *Client) SendDiscoverPacket(opts *DhcpRequestOptions) (dhcp4.Packet, error) {
 	discoveryPacket := c.DiscoverPacket(opts)
 	discoveryPacket.PadToMinSize()
-
+	c.connection.SetWriteTimeout(c.writeTimeout)		
 	return discoveryPacket, c.SendPacket(discoveryPacket)
 }
 
@@ -165,7 +182,7 @@ func (c *Client) GetOffer(discoverPacket *dhcp4.Packet) (dhcp4.Packet, error) {
 func (c *Client) SendRequest(offerPacket *dhcp4.Packet, opts *DhcpRequestOptions) (dhcp4.Packet, error) {
 	requestPacket := c.RequestPacket(offerPacket, opts)
 	requestPacket.PadToMinSize()
-
+	c.connection.SetWriteTimeout(c.writeTimeout)		
 	return requestPacket, c.SendPacket(requestPacket)
 }
 
@@ -205,7 +222,7 @@ func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (dhcp4.Packet, 
 func (c *Client) SendDecline(acknowledgementPacket *dhcp4.Packet) (dhcp4.Packet, error) {
 	declinePacket := c.DeclinePacket(acknowledgementPacket)
 	declinePacket.PadToMinSize()
-
+	c.connection.SetWriteTimeout(c.writeTimeout)
 	return declinePacket, c.SendPacket(declinePacket)
 }
 
@@ -329,20 +346,39 @@ func (c *Client) DeclinePacket(acknowledgement *dhcp4.Packet) dhcp4.Packet {
 //Lets do a Full DHCP Request.
 func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 	discoveryPacket, err := c.SendDiscoverPacket(opts)
+	keepgoing := true
 	if err != nil {
 		return false, discoveryPacket, err
 	}
-
+	fmt.Printf("@GetOffer\n")
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtGetOffer)
+	}
+	if !keepgoing {
+		return false, discoveryPacket, nil
+	}
 	offerPacket, err := c.GetOffer(&discoveryPacket)
 	if err != nil {
 		return false, offerPacket, err
 	}
-
+	fmt.Printf("@SendRequest\n")
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtSendRequest)
+	}
+	if !keepgoing {
+		return false, offerPacket, nil
+	}
 	requestPacket, err := c.SendRequest(&offerPacket,opts)
 	if err != nil {
 		return false, requestPacket, err
 	}
-
+	fmt.Printf("@GetAcknowledgement\n")
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtGetAcknowledgement)
+	}
+	if !keepgoing {
+		return false, requestPacket, nil
+	}
 	acknowledgement, err := c.GetAcknowledgement(&requestPacket)
 	if err != nil {
 		return false, acknowledgement, err
@@ -361,7 +397,7 @@ func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 func (c *Client) Renew(acknowledgement dhcp4.Packet) (bool, dhcp4.Packet, error) {
 	renewRequest := c.RenewalRequestPacket(&acknowledgement, nil)
 	renewRequest.PadToMinSize()
-
+	c.connection.SetWriteTimeout(c.writeTimeout)
 	err := c.SendPacket(renewRequest)
 	if err != nil {
 		return false, renewRequest, err
@@ -385,6 +421,6 @@ func (c *Client) Renew(acknowledgement dhcp4.Packet) (bool, dhcp4.Packet, error)
 func (c *Client) Release(acknowledgement dhcp4.Packet) error {
 	release := c.ReleasePacket(&acknowledgement)
 	release.PadToMinSize()
-
+	c.connection.SetWriteTimeout(c.writeTimeout)
 	return c.SendPacket(release)
 }

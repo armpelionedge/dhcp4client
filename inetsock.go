@@ -84,3 +84,7 @@ func (c *inetSock) ReadFrom() ([]byte, net.IP, error) {
 func (c *inetSock) SetReadTimeout(t time.Duration) error {
 	return c.SetReadDeadline(time.Now().Add(t))
 }
+
+func (c *inetSock) SetWriteTimeout(t time.Duration) error {
+	return c.SetWriteDeadline(time.Now().Add(t))
+}

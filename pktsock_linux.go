@@ -99,6 +99,13 @@ func (pc *packetSock) SetReadTimeout(t time.Duration) error {
 	return unix.SetsockoptTimeval(pc.fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
 }
 
+func (pc *packetSock) SetWriteTimeout(t time.Duration) error {
+
+	tv := unix.NsecToTimeval(t.Nanoseconds())
+	return unix.SetsockoptTimeval(pc.fd, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &tv)
+}
+
+
 // compute's 1's complement checksum
 func chksum(p []byte, csum []byte) {
 	cklen := len(p)
