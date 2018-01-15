@@ -13,6 +13,8 @@ const (
 	AtGetOffer = 0x01
 	AtSendRequest = 0x02
 	AtGetAcknowledgement = 0x03
+	AtSendRenewalRequest = 0x04
+
 )
 
 type RequestProgressCB func (state int) (keepgoing bool)
@@ -393,15 +395,27 @@ func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 
 //Renew a lease backed on the Acknowledgement Packet.
 //Returns Sucessfull, The AcknoledgementPacket, Any Errors
-func (c *Client) Renew(acknowledgement dhcp4.Packet) (bool, dhcp4.Packet, error) {
+func (c *Client) Renew(acknowledgement dhcp4.Packet, opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 	renewRequest := c.RenewalRequestPacket(&acknowledgement, nil)
 	renewRequest.PadToMinSize()
 	c.connection.SetWriteTimeout(c.writeTimeout)
+	keepgoing := true
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtSendRenewalRequest)
+	}
+	if !keepgoing {
+		return false, nil, nil
+	}
 	err := c.SendPacket(renewRequest)
 	if err != nil {
 		return false, renewRequest, err
 	}
-
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtGetAcknowledgement)
+	}
+	if !keepgoing {
+		return false, nil, nil
+	}
 	newAcknowledgement, err := c.GetAcknowledgement(&renewRequest)
 	if err != nil {
 		return false, newAcknowledgement, err
