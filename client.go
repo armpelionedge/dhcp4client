@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net"
 	"time"
-	"fmt"
 	"github.com/WigWagCo/dhcp4"
 )
 
@@ -350,7 +349,7 @@ func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 	if err != nil {
 		return false, discoveryPacket, err
 	}
-	fmt.Printf("@GetOffer\n")
+//	fmt.Printf("@GetOffer\n")
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtGetOffer)
 	}
@@ -361,7 +360,7 @@ func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 	if err != nil {
 		return false, offerPacket, err
 	}
-	fmt.Printf("@SendRequest\n")
+//	fmt.Printf("@SendRequest\n")
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtSendRequest)
 	}
@@ -372,7 +371,7 @@ func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 	if err != nil {
 		return false, requestPacket, err
 	}
-	fmt.Printf("@GetAcknowledgement\n")
+//	fmt.Printf("@GetAcknowledgement\n")
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtGetAcknowledgement)
 	}
