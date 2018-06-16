@@ -2,6 +2,7 @@ package dhcp4client
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"time"
 
@@ -11,12 +12,13 @@ import (
 const (
 	MaxDHCPLen = 576
 	// progress states
-	AtGetOffer           = 0x01
-	AtSendRequest        = 0x02
-	AtGetAcknowledgement = 0x03
-	AtSendRenewalRequest = 0x04
-	AtEndOfRequest       = 0x05
-	AtEndOfRenewal       = 0x06
+	AtGetOffer             = 0x01
+	AtSendRequest          = 0x02
+	AtGetAcknowledgement   = 0x03
+	AtSendRenewalRequest   = 0x04
+	AtEndOfRequest         = 0x05
+	AtEndOfRenewal         = 0x06
+	AtGetOfferLoopTimedOut = 0xF1
 )
 
 type RequestProgressCB func(state int) (keepgoing bool)
@@ -53,6 +55,13 @@ type connection interface {
 	SetWriteTimeout(t time.Duration) error
 }
 
+// Note: The implementor of the original lib chose
+// to use a functional programming approach. So 'options'
+// are actually functions. Then they made the helper functions
+// below return functions. Whew.
+// Should be rewritten so as not to be so utterly bizarre at
+// some point.
+
 func New(options ...func(*Client) error) (*Client, error) {
 	c := Client{
 		timeout:      time.Second * 10,
@@ -85,6 +94,19 @@ func (c *Client) SetOption(options ...func(*Client) error) error {
 		}
 	}
 	return nil
+}
+
+func AuxOpts(opts *DhcpRequestOptions) func(*Client) error {
+	return func(c *Client) error {
+		if opts != nil {
+			c.opts = opts
+			if opts.StepTimeout > 0 {
+				c.writeTimeout = opts.StepTimeout
+				c.timeout = opts.StepTimeout
+			}
+		}
+		return nil
+	}
 }
 
 func Timeout(t time.Duration) func(*Client) error {
@@ -155,7 +177,20 @@ func (c *Client) SendDiscoverPacket(opts *DhcpRequestOptions) (dhcp4.Packet, err
 //Retreive Offer...
 //Wait for the offer for a specific Discovery Packet.
 func (c *Client) GetOffer(discoverPacket *dhcp4.Packet) (dhcp4.Packet, error) {
+	end := time.Now()
+	if c.opts != nil {
+		end = end.Add(c.opts.StepTimeout)
+	} else {
+		end = end.Add(1 * time.Hour)
+	}
 	for {
+		now := time.Now()
+		if now.After(end) {
+			if c.opts != nil && c.opts.ProgressCB != nil {
+				c.opts.ProgressCB(AtGetOfferLoopTimedOut)
+			}
+			return nil, errors.New("timeout")
+		}
 		c.connection.SetReadTimeout(c.timeout)
 		readBuffer, source, err := c.connection.ReadFrom()
 		if err != nil {
