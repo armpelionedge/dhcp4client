@@ -232,7 +232,20 @@ func (c *Client) SendRequest(offerPacket *dhcp4.Packet) (dhcp4.Packet, error) {
 //Retreive Acknowledgement
 //Wait for the offer for a specific Request Packet.
 func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (dhcp4.Packet, error) {
+	end := time.Now()
+	if c.opts != nil {
+		end = end.Add(c.opts.StepTimeout)
+	} else {
+		end = end.Add(1 * time.Hour)
+	}
 	for {
+		now := time.Now()
+		if now.After(end) {
+			if c.opts != nil && c.opts.ProgressCB != nil {
+				c.opts.ProgressCB(AtGetOfferLoopTimedOut)
+			}
+			return nil, errors.New("timeout")
+		}
 		c.connection.SetReadTimeout(c.timeout)
 		readBuffer, source, err := c.connection.ReadFrom()
 		if err != nil {
