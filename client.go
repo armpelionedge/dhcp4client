@@ -19,6 +19,8 @@ const (
 	AtSendRenewalRequest   = 0x04
 	AtEndOfRequest         = 0x05
 	AtEndOfRenewal         = 0x06
+	AtGetOfferLoop         = 0x50
+	AtGetAckLoop           = 0x51
 	AtGetOfferLoopTimedOut = 0xF1
 	SyscallFailed          = 0x1001
 )
@@ -186,6 +188,9 @@ func (c *Client) GetOffer(discoverPacket *dhcp4.Packet) (dhcp4.Packet, error) {
 		end = end.Add(1 * time.Hour)
 	}
 	for {
+		if c.opts != nil && c.opts.ProgressCB != nil {
+			c.opts.ProgressCB(AtGetOfferLoop, "")
+		}
 		now := time.Now()
 		if now.After(end) {
 			if c.opts != nil && c.opts.ProgressCB != nil {
@@ -241,6 +246,9 @@ func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (dhcp4.Packet, 
 		end = end.Add(1 * time.Hour)
 	}
 	for {
+		if c.opts != nil && c.opts.ProgressCB != nil {
+			c.opts.ProgressCB(AtGetAckLoop, "")
+		}
 		now := time.Now()
 		if now.After(end) {
 			if c.opts != nil && c.opts.ProgressCB != nil {
