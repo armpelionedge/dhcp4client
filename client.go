@@ -3,6 +3,7 @@ package dhcp4client
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"time"
 
@@ -19,9 +20,10 @@ const (
 	AtEndOfRequest         = 0x05
 	AtEndOfRenewal         = 0x06
 	AtGetOfferLoopTimedOut = 0xF1
+	SyscallFailed          = 0x1001
 )
 
-type RequestProgressCB func(state int) (keepgoing bool)
+type RequestProgressCB func(state int, addinfo string) (keepgoing bool)
 
 type DhcpRequestOptions struct {
 	RequestedParams []byte
@@ -187,7 +189,7 @@ func (c *Client) GetOffer(discoverPacket *dhcp4.Packet) (dhcp4.Packet, error) {
 		now := time.Now()
 		if now.After(end) {
 			if c.opts != nil && c.opts.ProgressCB != nil {
-				c.opts.ProgressCB(AtGetOfferLoopTimedOut)
+				c.opts.ProgressCB(AtGetOfferLoopTimedOut, "")
 			}
 			return nil, errors.New("timeout")
 		}
@@ -242,11 +244,16 @@ func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (dhcp4.Packet, 
 		now := time.Now()
 		if now.After(end) {
 			if c.opts != nil && c.opts.ProgressCB != nil {
-				c.opts.ProgressCB(AtGetOfferLoopTimedOut)
+				c.opts.ProgressCB(AtGetOfferLoopTimedOut, "")
 			}
 			return nil, errors.New("timeout")
 		}
-		c.connection.SetReadTimeout(c.timeout)
+		err := c.connection.SetReadTimeout(c.timeout)
+		if err != nil {
+			if c.opts != nil && c.opts.ProgressCB != nil {
+				c.opts.ProgressCB(SyscallFailed, fmt.Sprintf("timeout failed: %s", err.Error()))
+			}
+		}
 		readBuffer, source, err := c.connection.ReadFrom()
 		if err != nil {
 			return dhcp4.Packet{}, err
@@ -409,7 +416,7 @@ func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 	}
 	//	fmt.Printf("@GetOffer\n")
 	if opts != nil && opts.ProgressCB != nil {
-		keepgoing = opts.ProgressCB(AtGetOffer)
+		keepgoing = opts.ProgressCB(AtGetOffer, "")
 	}
 	if !keepgoing {
 		return false, discoveryPacket, nil
@@ -420,7 +427,7 @@ func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 	}
 	//	fmt.Printf("@SendRequest\n")
 	if opts != nil && opts.ProgressCB != nil {
-		keepgoing = opts.ProgressCB(AtSendRequest)
+		keepgoing = opts.ProgressCB(AtSendRequest, "")
 	}
 	if !keepgoing {
 		return false, offerPacket, nil
@@ -431,7 +438,7 @@ func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 	}
 	//	fmt.Printf("@GetAcknowledgement\n")
 	if opts != nil && opts.ProgressCB != nil {
-		keepgoing = opts.ProgressCB(AtGetAcknowledgement)
+		keepgoing = opts.ProgressCB(AtGetAcknowledgement, "")
 	}
 	if !keepgoing {
 		return false, requestPacket, nil
@@ -441,7 +448,7 @@ func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
 		return false, acknowledgement, err
 	}
 	if opts != nil && opts.ProgressCB != nil {
-		keepgoing = opts.ProgressCB(AtEndOfRequest)
+		keepgoing = opts.ProgressCB(AtEndOfRequest, "")
 	}
 	acknowledgementOptions := acknowledgement.ParseOptions()
 	if dhcp4.MessageType(acknowledgementOptions[dhcp4.OptionDHCPMessageType][0]) != dhcp4.ACK {
@@ -460,7 +467,7 @@ func (c *Client) Renew(acknowledgement dhcp4.Packet, opts *DhcpRequestOptions) (
 	c.connection.SetWriteTimeout(c.writeTimeout)
 	keepgoing := true
 	if opts != nil && opts.ProgressCB != nil {
-		keepgoing = opts.ProgressCB(AtSendRenewalRequest)
+		keepgoing = opts.ProgressCB(AtSendRenewalRequest, "")
 	}
 	if !keepgoing {
 		return false, nil, nil
@@ -470,7 +477,7 @@ func (c *Client) Renew(acknowledgement dhcp4.Packet, opts *DhcpRequestOptions) (
 		return false, renewRequest, err
 	}
 	if opts != nil && opts.ProgressCB != nil {
-		keepgoing = opts.ProgressCB(AtGetAcknowledgement)
+		keepgoing = opts.ProgressCB(AtGetAcknowledgement, "")
 	}
 	if !keepgoing {
 		return false, nil, nil
@@ -480,7 +487,7 @@ func (c *Client) Renew(acknowledgement dhcp4.Packet, opts *DhcpRequestOptions) (
 		return false, newAcknowledgement, err
 	}
 	if opts != nil && opts.ProgressCB != nil {
-		keepgoing = opts.ProgressCB(AtEndOfRenewal)
+		keepgoing = opts.ProgressCB(AtEndOfRenewal, "")
 	}
 	newAcknowledgementOptions := newAcknowledgement.ParseOptions()
 	if dhcp4.MessageType(newAcknowledgementOptions[dhcp4.OptionDHCPMessageType][0]) != dhcp4.ACK {
