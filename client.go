@@ -23,6 +23,7 @@ const (
 	AtGetAckLoop           = 0x51
 	AtGetOfferLoopTimedOut = 0xF1
 	AtGetOfferError        = 0xF2
+	AtGetAckError          = 0xF3
 	SyscallFailed          = 0x1001
 )
 
@@ -268,6 +269,9 @@ func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (dhcp4.Packet, 
 		}
 		readBuffer, source, err := c.connection.ReadFrom()
 		if err != nil {
+			if c.opts != nil && c.opts.ProgressCB != nil {
+				c.opts.ProgressCB(AtGetAckError, fmt.Sprintf("error: %s", err.Error()))
+			}
 			return dhcp4.Packet{}, err
 		}
 
