@@ -22,6 +22,7 @@ const (
 	AtGetOfferLoop         = 0x50
 	AtGetAckLoop           = 0x51
 	AtGetOfferLoopTimedOut = 0xF1
+	AtGetOfferError        = 0xF2
 	SyscallFailed          = 0x1001
 )
 
@@ -201,6 +202,9 @@ func (c *Client) GetOffer(discoverPacket *dhcp4.Packet) (dhcp4.Packet, error) {
 		c.connection.SetReadTimeout(c.timeout)
 		readBuffer, source, err := c.connection.ReadFrom()
 		if err != nil {
+			if c.opts != nil && c.opts.ProgressCB != nil {
+				c.opts.ProgressCB(AtGetOfferError, fmt.Sprintf("error: %s", err.Error()))
+			}
 			return dhcp4.Packet{}, err
 		}
 
