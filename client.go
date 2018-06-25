@@ -13,18 +13,19 @@ import (
 const (
 	MaxDHCPLen = 576
 	// progress states
-	AtGetOffer             = 0x01
-	AtSendRequest          = 0x02
-	AtGetAcknowledgement   = 0x03
-	AtSendRenewalRequest   = 0x04
-	AtEndOfRequest         = 0x05
-	AtEndOfRenewal         = 0x06
-	AtGetOfferLoop         = 0x50
-	AtGetAckLoop           = 0x51
-	AtGetOfferLoopTimedOut = 0xF1
-	AtGetOfferError        = 0xF2
-	AtGetAckError          = 0xF3
-	SyscallFailed          = 0x1001
+	AtGetOffer                     = 0x01
+	AtSendRequest                  = 0x02
+	AtGetAcknowledgement           = 0x03
+	AtSendRenewalRequest           = 0x04
+	AtEndOfRequest                 = 0x05
+	AtEndOfRenewal                 = 0x06
+	AtGetOfferLoop                 = 0x50
+	AtGetAckLoop                   = 0x51
+	AtGetOfferLoopTimedOut         = 0xF1
+	AtGetOfferError                = 0xF2
+	AtGetAckError                  = 0xF3
+	AtSendRenewalRequestInitReboot = 0x10
+	SyscallFailed                  = 0x1001
 )
 
 type RequestProgressCB func(state int, addinfo string) (keepgoing bool)
@@ -175,6 +176,15 @@ func (c *Client) Close() error {
 //Send the Discovery Packet to the Broadcast Channel
 func (c *Client) SendDiscoverPacket(opts *DhcpRequestOptions) (dhcp4.Packet, error) {
 	discoveryPacket := c.DiscoverPacket(opts)
+	discoveryPacket.PadToMinSize()
+	c.connection.SetWriteTimeout(c.writeTimeout)
+	return discoveryPacket, c.SendPacket(discoveryPacket)
+}
+
+//Send the Discovery Packet to the Broadcast Channel
+func (c *Client) SendDiscoverPacketExistingIP(opts *DhcpRequestOptions, currentIP net.IP) (dhcp4.Packet, error) {
+	discoveryPacket := c.DiscoverPacket(opts)
+	discoveryPacket.AddOption(dhcp4.OptionRequestedIPAddress, currentIP.To4())
 	discoveryPacket.PadToMinSize()
 	c.connection.SetWriteTimeout(c.writeTimeout)
 	return discoveryPacket, c.SendPacket(discoveryPacket)
@@ -397,6 +407,34 @@ func (c *Client) RenewalRequestPacket(acknowledgement *dhcp4.Packet, opts *DhcpR
 	return packet
 }
 
+// RenewalRequestPacketInitReboot - creates a Request packet for the INIT-REBOOT state
+// as defined in RFC2131
+func (c *Client) RenewalRequestPacketInitReboot(currentIP net.IP, opts *DhcpRequestOptions) dhcp4.Packet { // acknowledgement *dhcp4.Packet,
+	messageid := make([]byte, 4)
+	c.generateXID(messageid)
+
+	//	acknowledgementOptions := acknowledgement.ParseOptions()
+
+	packet := dhcp4.NewPacket(dhcp4.BootRequest)
+	packet.SetCHAddr(c.hardwareAddr)
+
+	packet.SetXId(messageid)
+	// packet.SetCIAddr(acknowledgement.YIAddr())
+	//	packet.SetSIAddr(acknowledgement.SIAddr())
+
+	packet.SetBroadcast(c.broadcast)
+	packet.AddOption(dhcp4.OptionDHCPMessageType, []byte{byte(dhcp4.Request)})
+	packet.AddOption(dhcp4.OptionRequestedIPAddress, currentIP.To4())
+
+	if opts != nil {
+		if len(opts.RequestedParams) > 0 {
+			packet.AddOption(dhcp4.OptionParameterRequestList, opts.RequestedParams)
+		}
+	}
+
+	return packet
+}
+
 //Create Release Packet For a Release
 func (c *Client) ReleasePacket(acknowledgement *dhcp4.Packet) dhcp4.Packet {
 	messageid := make([]byte, 4)
@@ -432,6 +470,48 @@ func (c *Client) DeclinePacket(acknowledgement *dhcp4.Packet) dhcp4.Packet {
 	packet.AddOption(dhcp4.OptionServerIdentifier, acknowledgementOptions[dhcp4.OptionServerIdentifier])
 
 	return packet
+}
+
+// InitRebootRequest is called when we want to use an existing IP, and just try to send a DISCOVER pack
+// with out exising IP. What happens next depends on if the DHCP server is "authoritive" or not.
+// If it is, and we have asked for an IP it will nto provide, then we will get a deny answer,
+// otherwise we should wait for the timeout, and return this back. In this case a fresh
+// Request should be sent out.
+func (c *Client) InitRebootRequest(currentIP net.IP, opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
+	c.opts = opts
+	renewRequest := c.RenewalRequestPacketInitReboot(currentIP, opts)
+	renewRequest.PadToMinSize()
+	c.connection.SetWriteTimeout(c.writeTimeout)
+	keepgoing := true
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtSendRenewalRequestInitReboot, "")
+	}
+	if !keepgoing {
+		return false, nil, nil
+	}
+	err := c.SendPacket(renewRequest)
+	if err != nil {
+		return false, renewRequest, err
+	}
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtGetAcknowledgement, "")
+	}
+	if !keepgoing {
+		return false, nil, nil
+	}
+	newAcknowledgement, err := c.GetAcknowledgement(&renewRequest)
+	if err != nil {
+		return false, newAcknowledgement, err
+	}
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtEndOfRenewal, "")
+	}
+	newAcknowledgementOptions := newAcknowledgement.ParseOptions()
+	if dhcp4.MessageType(newAcknowledgementOptions[dhcp4.OptionDHCPMessageType][0]) != dhcp4.ACK {
+		return false, newAcknowledgement, nil
+	}
+
+	return true, newAcknowledgement, nil
 }
 
 //Lets do a Full DHCP Request.
