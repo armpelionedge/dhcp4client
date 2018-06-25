@@ -203,6 +203,12 @@ func (c *Client) GetOffer(discoverPacket *dhcp4.Packet) (dhcp4.Packet, error) {
 		c.connection.SetReadTimeout(c.timeout)
 		readBuffer, source, err := c.connection.ReadFrom()
 		if err != nil {
+			if err, ok := err.(net.Error); ok && err.Timeout() {
+				if c.opts != nil && c.opts.ProgressCB != nil {
+					c.opts.ProgressCB(AtGetOfferError, fmt.Sprintf("error (timeout): %s", err.Error()))
+				}
+				return nil, errors.New("timeout")
+			}
 			if c.opts != nil && c.opts.ProgressCB != nil {
 				c.opts.ProgressCB(AtGetOfferError, fmt.Sprintf("error: %s", err.Error()))
 			}
@@ -269,6 +275,12 @@ func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (dhcp4.Packet, 
 		}
 		readBuffer, source, err := c.connection.ReadFrom()
 		if err != nil {
+			if err, ok := err.(net.Error); ok && err.Timeout() {
+				if c.opts != nil && c.opts.ProgressCB != nil {
+					c.opts.ProgressCB(AtGetAckError, fmt.Sprintf("error (timeout): %s", err.Error()))
+				}
+				return nil, errors.New("timeout")
+			}
 			if c.opts != nil && c.opts.ProgressCB != nil {
 				c.opts.ProgressCB(AtGetAckError, fmt.Sprintf("error: %s", err.Error()))
 			}
