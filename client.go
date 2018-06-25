@@ -26,6 +26,10 @@ const (
 	AtGetAckError                  = 0xF3
 	AtSendRenewalRequestInitReboot = 0x10
 	SyscallFailed                  = 0x1001
+	// used by GetAcknowledgement()
+	Failed   = 0x00
+	Success  = int(dhcp4.ACK)
+	Rejected = int(dhcp4.NAK)
 )
 
 type RequestProgressCB func(state int, addinfo string) (keepgoing bool)
@@ -259,7 +263,7 @@ func (c *Client) SendRequest(offerPacket *dhcp4.Packet) (dhcp4.Packet, error) {
 
 //Retreive Acknowledgement
 //Wait for the offer for a specific Request Packet.
-func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (dhcp4.Packet, error) {
+func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (pack dhcp4.Packet, ackval int, err error) {
 	end := time.Now()
 	if c.opts != nil {
 		end = end.Add(c.opts.StepTimeout)
@@ -275,26 +279,32 @@ func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (dhcp4.Packet, 
 			if c.opts != nil && c.opts.ProgressCB != nil {
 				c.opts.ProgressCB(AtGetOfferLoopTimedOut, "")
 			}
-			return nil, errors.New("timeout")
+			err = errors.New("timeout")
+			return
 		}
-		err := c.connection.SetReadTimeout(c.timeout)
+		err = c.connection.SetReadTimeout(c.timeout)
 		if err != nil {
 			if c.opts != nil && c.opts.ProgressCB != nil {
 				c.opts.ProgressCB(SyscallFailed, fmt.Sprintf("timeout failed: %s", err.Error()))
 			}
+			// ignore this error
+			err = nil
 		}
-		readBuffer, source, err := c.connection.ReadFrom()
-		if err != nil {
-			if err, ok := err.(net.Error); ok && err.Timeout() {
+		readBuffer, source, err2 := c.connection.ReadFrom()
+		if err2 != nil {
+			if err2, ok := err2.(net.Error); ok && err2.Timeout() {
 				if c.opts != nil && c.opts.ProgressCB != nil {
-					c.opts.ProgressCB(AtGetAckError, fmt.Sprintf("error (timeout): %s", err.Error()))
+					c.opts.ProgressCB(AtGetAckError, fmt.Sprintf("error (timeout): %s", err2.Error()))
 				}
-				return nil, errors.New("timeout")
+				err = errors.New("timeout")
+				return
 			}
 			if c.opts != nil && c.opts.ProgressCB != nil {
 				c.opts.ProgressCB(AtGetAckError, fmt.Sprintf("error: %s", err.Error()))
 			}
-			return dhcp4.Packet{}, err
+			pack = dhcp4.Packet{}
+			err = err2
+			return
 		}
 
 		acknowledgementPacket := dhcp4.Packet(readBuffer)
@@ -315,7 +325,16 @@ func (c *Client) GetAcknowledgement(requestPacket *dhcp4.Packet) (dhcp4.Packet, 
 			continue
 		}
 
-		return acknowledgementPacket, nil
+		if dhcp4.MessageType(acknowledgementPacketOptions[dhcp4.OptionDHCPMessageType][0]) == dhcp4.NAK {
+			ackval = Rejected
+		}
+		if dhcp4.MessageType(acknowledgementPacketOptions[dhcp4.OptionDHCPMessageType][0]) == dhcp4.ACK {
+			ackval = Success
+		}
+
+		pack = acknowledgementPacket
+		err = nil
+		return
 	}
 }
 
@@ -477,7 +496,7 @@ func (c *Client) DeclinePacket(acknowledgement *dhcp4.Packet) dhcp4.Packet {
 // If it is, and we have asked for an IP it will nto provide, then we will get a deny answer,
 // otherwise we should wait for the timeout, and return this back. In this case a fresh
 // Request should be sent out.
-func (c *Client) InitRebootRequest(currentIP net.IP, opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
+func (c *Client) InitRebootRequest(currentIP net.IP, opts *DhcpRequestOptions) (int, dhcp4.Packet, error) {
 	c.opts = opts
 	renewRequest := c.RenewalRequestPacketInitReboot(currentIP, opts)
 	renewRequest.PadToMinSize()
@@ -487,88 +506,83 @@ func (c *Client) InitRebootRequest(currentIP net.IP, opts *DhcpRequestOptions) (
 		keepgoing = opts.ProgressCB(AtSendRenewalRequestInitReboot, "")
 	}
 	if !keepgoing {
-		return false, nil, nil
+		return Failed, nil, nil
 	}
 	err := c.SendPacket(renewRequest)
 	if err != nil {
-		return false, renewRequest, err
+		return Failed, renewRequest, err
 	}
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtGetAcknowledgement, "")
 	}
 	if !keepgoing {
-		return false, nil, nil
+		return Failed, nil, nil
 	}
-	newAcknowledgement, err := c.GetAcknowledgement(&renewRequest)
+	newAcknowledgement, ackval, err := c.GetAcknowledgement(&renewRequest)
 	if err != nil {
-		return false, newAcknowledgement, err
+		return Failed, newAcknowledgement, err
 	}
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtEndOfRenewal, "")
 	}
-	newAcknowledgementOptions := newAcknowledgement.ParseOptions()
-	if dhcp4.MessageType(newAcknowledgementOptions[dhcp4.OptionDHCPMessageType][0]) != dhcp4.ACK {
-		return false, newAcknowledgement, nil
-	}
 
-	return true, newAcknowledgement, nil
+	return ackval, newAcknowledgement, nil
 }
 
 //Lets do a Full DHCP Request.
-func (c *Client) Request(opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
+func (c *Client) Request(opts *DhcpRequestOptions) (int, dhcp4.Packet, error) {
 	c.opts = opts
 	discoveryPacket, err := c.SendDiscoverPacket(opts)
 	keepgoing := true
 	if err != nil {
-		return false, discoveryPacket, err
+		return Failed, discoveryPacket, err
 	}
 	//	fmt.Printf("@GetOffer\n")
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtGetOffer, "")
 	}
 	if !keepgoing {
-		return false, discoveryPacket, nil
+		return Failed, discoveryPacket, nil
 	}
 	offerPacket, err := c.GetOffer(&discoveryPacket)
 	if err != nil {
-		return false, offerPacket, err
+		return Failed, offerPacket, err
 	}
 	//	fmt.Printf("@SendRequest\n")
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtSendRequest, "")
 	}
 	if !keepgoing {
-		return false, offerPacket, nil
+		return Failed, offerPacket, nil
 	}
 	requestPacket, err := c.SendRequest(&offerPacket)
 	if err != nil {
-		return false, requestPacket, err
+		return Failed, requestPacket, err
 	}
 	//	fmt.Printf("@GetAcknowledgement\n")
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtGetAcknowledgement, "")
 	}
 	if !keepgoing {
-		return false, requestPacket, nil
+		return Failed, requestPacket, nil
 	}
-	acknowledgement, err := c.GetAcknowledgement(&requestPacket)
+	acknowledgement, ackval, err := c.GetAcknowledgement(&requestPacket)
 	if err != nil {
-		return false, acknowledgement, err
+		return Failed, acknowledgement, err
 	}
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtEndOfRequest, "")
 	}
-	acknowledgementOptions := acknowledgement.ParseOptions()
-	if dhcp4.MessageType(acknowledgementOptions[dhcp4.OptionDHCPMessageType][0]) != dhcp4.ACK {
-		return false, acknowledgement, nil
-	}
-
-	return true, acknowledgement, nil
+	//acknowledgementOptions := acknowledgement.ParseOptions()
+	// if dhcp4.MessageType(acknowledgementOptions[dhcp4.OptionDHCPMessageType][0]) != dhcp4.ACK {
+	// 	return ackval, acknowledgement, nil
+	// }
+	return ackval, acknowledgement, nil
 }
 
 //Renew a lease backed on the Acknowledgement Packet.
 //Returns Sucessfull, The AcknoledgementPacket, Any Errors
-func (c *Client) Renew(acknowledgement dhcp4.Packet, opts *DhcpRequestOptions) (bool, dhcp4.Packet, error) {
+func (c *Client) Renew(acknowledgement dhcp4.Packet, opts *DhcpRequestOptions) (int, dhcp4.Packet, error) {
 	c.opts = opts
 	renewRequest := c.RenewalRequestPacket(&acknowledgement, nil)
 	renewRequest.PadToMinSize()
@@ -578,31 +592,31 @@ func (c *Client) Renew(acknowledgement dhcp4.Packet, opts *DhcpRequestOptions) (
 		keepgoing = opts.ProgressCB(AtSendRenewalRequest, "")
 	}
 	if !keepgoing {
-		return false, nil, nil
+		return Failed, nil, nil
 	}
 	err := c.SendPacket(renewRequest)
 	if err != nil {
-		return false, renewRequest, err
+		return Failed, renewRequest, err
 	}
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtGetAcknowledgement, "")
 	}
 	if !keepgoing {
-		return false, nil, nil
+		return Failed, nil, nil
 	}
-	newAcknowledgement, err := c.GetAcknowledgement(&renewRequest)
+	newAcknowledgement, ackval, err := c.GetAcknowledgement(&renewRequest)
 	if err != nil {
-		return false, newAcknowledgement, err
+		return ackval, newAcknowledgement, err
 	}
 	if opts != nil && opts.ProgressCB != nil {
 		keepgoing = opts.ProgressCB(AtEndOfRenewal, "")
 	}
-	newAcknowledgementOptions := newAcknowledgement.ParseOptions()
-	if dhcp4.MessageType(newAcknowledgementOptions[dhcp4.OptionDHCPMessageType][0]) != dhcp4.ACK {
-		return false, newAcknowledgement, nil
-	}
+	//	newAcknowledgementOptions := newAcknowledgement.ParseOptions()
+	// if dhcp4.MessageType(newAcknowledgementOptions[dhcp4.OptionDHCPMessageType][0]) != dhcp4.ACK {
+	// 	return false, newAcknowledgement, nil
+	// }
 
-	return true, newAcknowledgement, nil
+	return ackval, newAcknowledgement, nil
 }
 
 //Release a lease backed on the Acknowledgement Packet.
