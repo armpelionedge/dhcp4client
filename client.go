@@ -443,9 +443,10 @@ func (c *Client) RenewalRequestPacketInitReboot(currentIP net.IP, opts *DhcpRequ
 
 	packet.SetXId(messageid)
 	// packet.SetCIAddr(acknowledgement.YIAddr())
-	//	packet.SetSIAddr(acknowledgement.SIAddr())
+	packet.SetSIAddr(net.IPv4(0, 0, 0, 0))
 
-	packet.SetBroadcast(c.broadcast)
+	//	packet.SetBroadcast(c.broadcast)
+	packet.AddOption(dhcp4.OptionClientIdentifier, c.hardwareAddr)
 	packet.AddOption(dhcp4.OptionDHCPMessageType, []byte{byte(dhcp4.Request)})
 	packet.AddOption(dhcp4.OptionRequestedIPAddress, currentIP.To4())
 
