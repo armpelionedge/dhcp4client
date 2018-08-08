@@ -382,9 +382,11 @@ func (c *Client) RequestPacket(offerPacket *dhcp4.Packet) dhcp4.Packet {
 
 	packet.SetXId(offerPacket.XId())
 	packet.SetCIAddr(offerPacket.CIAddr())
-	packet.SetSIAddr(offerPacket.SIAddr())
+	packet.SetSIAddr(net.IPv4(0, 0, 0, 0))
+	//packet.SetSIAddr(offerPacket.SIAddr())
 
-	packet.SetBroadcast(c.broadcast)
+	//	packet.SetBroadcast(c.broadcast)
+	packet.AddOption(dhcp4.OptionClientIdentifier, offerPacket.CHAddr())
 	packet.AddOption(dhcp4.OptionDHCPMessageType, []byte{byte(dhcp4.Request)})
 	packet.AddOption(dhcp4.OptionRequestedIPAddress, (offerPacket.YIAddr()).To4())
 	packet.AddOption(dhcp4.OptionServerIdentifier, offerOptions[dhcp4.OptionServerIdentifier])
@@ -410,9 +412,11 @@ func (c *Client) RenewalRequestPacket(acknowledgement *dhcp4.Packet, opts *DhcpR
 
 	packet.SetXId(messageid)
 	packet.SetCIAddr(acknowledgement.YIAddr())
-	packet.SetSIAddr(acknowledgement.SIAddr())
+	//	packet.SetSIAddr(acknowledgement.SIAddr())
+	packet.SetSIAddr(net.IPv4(0, 0, 0, 0))
 
-	packet.SetBroadcast(c.broadcast)
+	//	packet.SetBroadcast(c.broadcast)
+	packet.AddOption(dhcp4.OptionClientIdentifier, acknowledgement.CHAddr())
 	packet.AddOption(dhcp4.OptionDHCPMessageType, []byte{byte(dhcp4.Request)})
 	packet.AddOption(dhcp4.OptionRequestedIPAddress, (acknowledgement.YIAddr()).To4())
 	packet.AddOption(dhcp4.OptionServerIdentifier, acknowledgementOptions[dhcp4.OptionServerIdentifier])
