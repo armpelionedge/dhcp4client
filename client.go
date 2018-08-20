@@ -25,6 +25,7 @@ const (
 	AtGetOfferError                = 0xF2
 	AtGetAckError                  = 0xF3
 	AtSendRenewalRequestInitReboot = 0x10
+	AtGetOfferUnicast              = 0xA01
 	SyscallFailed                  = 0x1001
 	// used by GetAcknowledgement()
 	Failed   = 0x00
@@ -180,6 +181,14 @@ func (c *Client) Close() error {
 //Send the Discovery Packet to the Broadcast Channel
 func (c *Client) SendDiscoverPacket(opts *DhcpRequestOptions) (dhcp4.Packet, error) {
 	discoveryPacket := c.DiscoverPacket(opts)
+	discoveryPacket.PadToMinSize()
+	c.connection.SetWriteTimeout(c.writeTimeout)
+	return discoveryPacket, c.SendPacket(discoveryPacket)
+}
+
+//Send the Discovery Packet to the Broadcast Channel
+func (c *Client) SendDiscoverAsUnicastPacket(opts *DhcpRequestOptions) (dhcp4.Packet, error) {
+	discoveryPacket := c.DiscoverPacketUnicast(opts)
 	discoveryPacket.PadToMinSize()
 	c.connection.SetWriteTimeout(c.writeTimeout)
 	return discoveryPacket, c.SendPacket(discoveryPacket)
@@ -373,6 +382,29 @@ func (c *Client) DiscoverPacket(opts *DhcpRequestOptions) dhcp4.Packet {
 	return packet
 }
 
+//Create Discover Packet
+func (c *Client) DiscoverPacketUnicast(opts *DhcpRequestOptions) dhcp4.Packet {
+	messageid := make([]byte, 4)
+	c.generateXID(messageid)
+
+	packet := dhcp4.NewPacket(dhcp4.BootRequest)
+	packet.SetCHAddr(c.hardwareAddr)
+	packet.SetXId(messageid)
+	packet.SetSIAddr(net.IPv4(0, 0, 0, 0))
+	//	packet.SetBroadcast(c.broadcast)
+
+	packet.AddOption(dhcp4.OptionDHCPMessageType, []byte{byte(dhcp4.Discover)})
+	packet.AddOption(dhcp4.OptionClientIdentifier, c.hardwareAddr)
+
+	if opts != nil {
+		if len(opts.RequestedParams) > 0 {
+			packet.AddOption(dhcp4.OptionParameterRequestList, opts.RequestedParams)
+		}
+	}
+	//packet.PadToMinSize()
+	return packet
+}
+
 //Create Request Packet
 func (c *Client) RequestPacket(offerPacket *dhcp4.Packet) dhcp4.Packet {
 	offerOptions := offerPacket.ParseOptions()
@@ -534,10 +566,77 @@ func (c *Client) InitRebootRequest(currentIP net.IP, opts *DhcpRequestOptions) (
 	return ackval, newAcknowledgement, nil
 }
 
-//Lets do a Full DHCP Request.
+// Request will do a Full DHCP Request. If a broadcast discover fails, we will try a
+// unicast discover
 func (c *Client) Request(opts *DhcpRequestOptions) (int, dhcp4.Packet, error) {
 	c.opts = opts
 	discoveryPacket, err := c.SendDiscoverPacket(opts)
+	keepgoing := true
+	if err != nil {
+		return Failed, discoveryPacket, err
+	}
+	//	fmt.Printf("@GetOffer\n")
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtGetOffer, "")
+	}
+	if !keepgoing {
+		return Failed, discoveryPacket, nil
+	}
+	offerPacket, err := c.GetOffer(&discoveryPacket)
+	if err != nil {
+		if err.Error() == "timeout" {
+			// ok - let's try a unicast discover
+			keepgoing = opts.ProgressCB(AtGetOfferUnicast, "")
+			discoveryPacket, err = c.SendDiscoverAsUnicastPacket(opts)
+			if err != nil || !keepgoing {
+				return Failed, discoveryPacket, err
+			}
+			offerPacket, err = c.GetOffer(&discoveryPacket)
+			if err != nil {
+				return Failed, offerPacket, err
+			}
+		} else {
+			return Failed, offerPacket, err
+		}
+	}
+	//	fmt.Printf("@SendRequest\n")
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtSendRequest, "")
+	}
+	if !keepgoing {
+		return Failed, offerPacket, nil
+	}
+	requestPacket, err := c.SendRequest(&offerPacket)
+	if err != nil {
+		return Failed, requestPacket, err
+	}
+	//	fmt.Printf("@GetAcknowledgement\n")
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtGetAcknowledgement, "")
+	}
+	if !keepgoing {
+		return Failed, requestPacket, nil
+	}
+	acknowledgement, ackval, err := c.GetAcknowledgement(&requestPacket)
+	if err != nil {
+		return Failed, acknowledgement, err
+	}
+	if opts != nil && opts.ProgressCB != nil {
+		keepgoing = opts.ProgressCB(AtEndOfRequest, "")
+	}
+	//acknowledgementOptions := acknowledgement.ParseOptions()
+	// if dhcp4.MessageType(acknowledgementOptions[dhcp4.OptionDHCPMessageType][0]) != dhcp4.ACK {
+	// 	return ackval, acknowledgement, nil
+	// }
+	return ackval, acknowledgement, nil
+}
+
+// RequestAsUnicast does a normal request process, but starts with a Unicast flag DISCOVER packet
+// this is actually what udhcp does on Linux. Apparently, some routers have poor DHCP server implementations
+// or don't like broadcast flag and/or a broadcast Ethernet frame for some reason.
+func (c *Client) RequestAsUnicast(opts *DhcpRequestOptions) (int, dhcp4.Packet, error) {
+	c.opts = opts
+	discoveryPacket, err := c.SendDiscoverAsUnicastPacket(opts)
 	keepgoing := true
 	if err != nil {
 		return Failed, discoveryPacket, err
